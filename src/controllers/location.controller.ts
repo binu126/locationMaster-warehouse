@@ -1,9 +1,9 @@
 import { Request, Response } from "express";
 import { getPool } from "../config/db.js";
 
-/**
- * GET /api/locations
- * GET /api/locations?type=WAREHOUSE&status=ACTIVE
+/*
+ GET /api/locations
+ GET /api/locations?type=WAREHOUSE&status=ACTIVE
  */
 export const getLocations = async (req: Request, res: Response) => {
   try {
@@ -27,8 +27,8 @@ export const getLocations = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * GET /api/locations/:id
+/*
+ GET /api/locations/:id
  */
 export const getLocationById = async (req: Request, res: Response) => {
   try {
@@ -49,8 +49,7 @@ export const getLocationById = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * POST /api/locations
+/* POST /api/locations
  */
 export const createLocation = async (req: Request, res: Response) => {
   try {
@@ -139,9 +138,7 @@ export const createLocation = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * PUT /api/locations/:id
- */
+//PUT /api/locations/:id
 export const updateLocation = async (req: Request, res: Response) => {
   try {
     const {
@@ -242,9 +239,7 @@ export const updateLocation = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * DELETE /api/locations/:id
- */
+/*DELETE /api/locations/:id*/
 export const deleteLocation = async (req: Request, res: Response) => {
   try {
     const pool = await getPool();
