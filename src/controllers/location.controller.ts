@@ -4,23 +4,103 @@ import { getPool } from "../config/db.js";
 /*
  GET /api/locations
  GET /api/locations?type=WAREHOUSE&status=ACTIVE
- */
+*/
 export const getLocations = async (req: Request, res: Response) => {
   try {
-    const { type, status } = req.query;
+    const {
+      page = "1",
+      limit = "10",
+      type,
+      status,
+      search,
+      sortBy = "id",
+      order = "asc"
+    } = req.query;
 
-    let query = "SELECT * FROM Locations WHERE 1=1";
-    if (type) query += " AND type = @type";
-    if (status) query += " AND status = @status";
+    const pageNumber = Math.max(Number(page) || 1, 1);
+    const pageSize = Math.max(Number(limit) || 10, 1);
+    const offset = (pageNumber - 1) * pageSize;
+
+    // SORT FIELD
+    const allowedSortFields = ["id", "code", "name", "type", "status", "capacity"];
+    const safeSortBy =
+      typeof sortBy === "string" && allowedSortFields.includes(sortBy)
+        ? sortBy
+        : "id";
+
+    // ORDER
+    const safeOrder =
+      typeof order === "string" && order.toLowerCase() === "desc"
+        ? "DESC"
+        : "ASC";
+
+    let dataQuery = "SELECT * FROM Locations WHERE 1=1";
+    let countQuery = "SELECT COUNT(*) as total FROM Locations WHERE 1=1";
 
     const pool = await getPool();
     const request = pool.request();
+    const countRequest = pool.request();
 
-    if (type) request.input("type", type as string);
-    if (status) request.input("status", status as string);
+    // Filter: type
+    if (type) {
+      dataQuery += " AND type = @type";
+      countQuery += " AND type = @type";
+      request.input("type", type);
+      countRequest.input("type", type);
+    }
 
-    const result = await request.query(query);
-    res.json(result.recordset);
+    // Filter: status
+    if (status) {
+      dataQuery += " AND status = @status";
+      countQuery += " AND status = @status";
+      request.input("status", status);
+      countRequest.input("status", status);
+    }
+
+    //  MULTI-FIELD SEARCH
+    if (search && typeof search === "string") {
+      dataQuery += `
+        AND (
+          code LIKE @search OR
+          name LIKE @search OR
+          address LIKE @search
+        )
+      `;
+      countQuery += `
+        AND (
+          code LIKE @search OR
+          name LIKE @search OR
+          address LIKE @search
+        )
+      `;
+      request.input("search", `%${search}%`);
+      countRequest.input("search", `%${search}%`);
+    }
+
+    dataQuery += `
+      ORDER BY ${safeSortBy} ${safeOrder}
+      OFFSET @offset ROWS
+      FETCH NEXT @limit ROWS ONLY
+    `;
+
+    request.input("offset", offset);
+    request.input("limit", pageSize);
+
+    const [dataResult, countResult] = await Promise.all([
+      request.query(dataQuery),
+      countRequest.query(countQuery)
+    ]);
+
+    const totalRecords = countResult.recordset[0].total;
+    const totalPages = Math.ceil(totalRecords / pageSize);
+
+    res.json({
+      page: pageNumber,
+      limit: pageSize,
+      totalRecords,
+      totalPages,
+      data: dataResult.recordset
+    });
   } catch (error) {
     console.error("Error fetching locations:", error);
     res.status(500).json({ message: "Failed to fetch locations" });
@@ -29,7 +109,7 @@ export const getLocations = async (req: Request, res: Response) => {
 
 /*
  GET /api/locations/:id
- */
+*/
 export const getLocationById = async (req: Request, res: Response) => {
   try {
     const pool = await getPool();
@@ -49,8 +129,9 @@ export const getLocationById = async (req: Request, res: Response) => {
   }
 };
 
-/* POST /api/locations
- */
+/*
+ POST /api/locations
+*/
 export const createLocation = async (req: Request, res: Response) => {
   try {
     const {
@@ -66,45 +147,26 @@ export const createLocation = async (req: Request, res: Response) => {
       maxTemperature
     } = req.body;
 
-    // Required fields
     if (!code || !name || !type || !address || capacity === undefined) {
-      return res.status(400).json({
-        message: "Missing required fields"
-      });
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Capacity rules
-    if (usedCapacity < 0) {
-      return res.status(400).json({
-        message: "Used capacity cannot be negative"
-      });
+    if (usedCapacity < 0 || usedCapacity > capacity) {
+      return res.status(400).json({ message: "Invalid capacity values" });
     }
 
-    if (usedCapacity > capacity) {
-      return res.status(400).json({
-        message: "Used capacity cannot exceed capacity"
-      });
-    }
-
-    // Temperature rules
     if (temperatureControlled) {
-      if (minTemperature === undefined || maxTemperature === undefined) {
-        return res.status(400).json({
-          message: "Temperature range required when temperatureControlled is true"
-        });
+      if (
+        minTemperature === undefined ||
+        maxTemperature === undefined ||
+        minTemperature >= maxTemperature
+      ) {
+        return res.status(400).json({ message: "Invalid temperature range" });
       }
-
-      if (minTemperature >= maxTemperature) {
-        return res.status(400).json({
-          message: "minTemperature must be less than maxTemperature"
-        });
-      }
-    } else {
-      if (minTemperature !== undefined || maxTemperature !== undefined) {
-        return res.status(400).json({
-          message: "Temperature values not allowed when temperature control is disabled"
-        });
-      }
+    } else if (minTemperature !== undefined || maxTemperature !== undefined) {
+      return res.status(400).json({
+        message: "Temperature values not allowed when temperature control is disabled"
+      });
     }
 
     const pool = await getPool();
@@ -138,7 +200,9 @@ export const createLocation = async (req: Request, res: Response) => {
   }
 };
 
-//PUT /api/locations/:id
+/*
+ PUT /api/locations/:id
+*/
 export const updateLocation = async (req: Request, res: Response) => {
   try {
     const {
@@ -153,11 +217,8 @@ export const updateLocation = async (req: Request, res: Response) => {
       maxTemperature
     } = req.body;
 
-    // Capacity rules
     if (usedCapacity !== undefined && usedCapacity < 0) {
-      return res.status(400).json({
-        message: "Used capacity cannot be negative"
-      });
+      return res.status(400).json({ message: "Used capacity cannot be negative" });
     }
 
     if (
@@ -165,32 +226,7 @@ export const updateLocation = async (req: Request, res: Response) => {
       usedCapacity !== undefined &&
       usedCapacity > capacity
     ) {
-      return res.status(400).json({
-        message: "Used capacity cannot exceed capacity"
-      });
-    }
-
-    // Temperature rules
-    if (temperatureControlled === true) {
-      if (minTemperature === undefined || maxTemperature === undefined) {
-        return res.status(400).json({
-          message: "Temperature range required when temperatureControlled is true"
-        });
-      }
-
-      if (minTemperature >= maxTemperature) {
-        return res.status(400).json({
-          message: "minTemperature must be less than maxTemperature"
-        });
-      }
-    }
-
-    if (temperatureControlled === false) {
-      if (minTemperature !== undefined || maxTemperature !== undefined) {
-        return res.status(400).json({
-          message: "Temperature values not allowed when temperature control is disabled"
-        });
-      }
+      return res.status(400).json({ message: "Used capacity cannot exceed capacity" });
     }
 
     const pool = await getPool();
@@ -208,8 +244,7 @@ export const updateLocation = async (req: Request, res: Response) => {
       .input("minTemperature", minTemperature ?? null)
       .input("maxTemperature", maxTemperature ?? null)
       .query(`
-        UPDATE Locations
-        SET
+        UPDATE Locations SET
           name = COALESCE(@name, name),
           type = COALESCE(@type, type),
           address = COALESCE(@address, address),
@@ -239,7 +274,9 @@ export const updateLocation = async (req: Request, res: Response) => {
   }
 };
 
-/*DELETE /api/locations/:id*/
+/*
+ DELETE /api/locations/:id
+*/
 export const deleteLocation = async (req: Request, res: Response) => {
   try {
     const pool = await getPool();

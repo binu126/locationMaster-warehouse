@@ -38,7 +38,7 @@ describe("Locations API - CRUD", () => {
   it("GET /api/locations → 200", async () => {
     const res = await request(app).get("/api/locations");
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
   });
 
   // READ BY ID
